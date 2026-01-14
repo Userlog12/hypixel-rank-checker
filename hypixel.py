@@ -13,49 +13,6 @@ MOJANG_UUID_API = "https://api.mojang.com/user/profiles/"
 MOJANG_HISTORY_API = "https://api.mojang.com/user/profiles/{uuid}/names"
 HYPIXEL_API = "https://api.hypixel.net/"
 HYPIXEL_API_KEY = "789891d7-6084-4d51-bae3-517afbe55ca9"
-CAPES_API = "https://api.capes.dev/load/"
-
-# Cape rarity ranking (most rare to least rare)
-CAPE_RARITY = {
-    # Ultra-rare (sub-500 accounts)
-    'scrolls': 1,
-    'cobalt': 2,
-    'microsoft_xbox': 3,
-    'mojang_classic': 4,
-    'mojang': 5,
-    'mojang_studios': 6,
-    
-    # Rare MineCon
-    'minecon2011': 10,
-    'minecon2012': 11,
-    'minecon2013': 12,
-    'minecon2015': 13,
-    'minecon2016': 14,
-    
-    # Modern event capes
-    'cherry_blossom': 20,
-    'vanilla': 21,
-    '15th_anniversary': 22,
-    'mcc_15': 23,
-    'mojang_office': 24,
-    
-    # Common / account-based
-    'migrator': 30,
-    'pan': 31,
-    
-    # Promotional movie capes
-    'home': 40,
-    'menace': 41,
-    'yearn': 42,
-    
-    # Mod capes (non-official)
-    'optifine': 100,
-    'labymod': 101,
-    'lunar': 102,
-    'badlion': 103,
-    
-    'other': 999
-}
 
 # Stats tracking
 stats = defaultdict(int)
@@ -64,7 +21,6 @@ checked_count = 0
 failed_usernames = []
 username_changes = []
 rate_limited_queue = []
-cape_stats = defaultdict(int)
 
 def ensure_folder_exists(folder_name):
     """Ensure a specific folder exists, create only when needed"""
@@ -108,62 +64,6 @@ def get_uuid_from_username(username):
         return None, None, "Connection error to Mojang API", False
     except Exception as e:
         return None, None, f"Unexpected error: {str(e)}", False
-
-def get_capes(uuid):
-    """Get player's capes from capes.dev API"""
-    try:
-        url = f"{CAPES_API}{uuid}"
-        response = requests.get(url, timeout=10)
-        
-        if response.status_code == 200:
-            data = response.json()
-            if data and isinstance(data, dict) and 'capes' in data:
-                return data['capes'], None
-            return [], None
-        elif response.status_code == 404:
-            return [], None  # No capes found
-        elif response.status_code == 429:
-            return None, "Rate limited"
-        else:
-            return [], f"Cape API error: {response.status_code}"
-    except Exception as e:
-        return [], f"Cape check error: {str(e)}"
-
-def get_rarest_cape(capes_list):
-    """Determine the rarest cape from a list of capes"""
-    if not capes_list or len(capes_list) == 0:
-        return "No_Cape", 9999
-    
-    rarest = None
-    rarest_score = 9999
-    
-    for cape in capes_list:
-        cape_type = cape.get('type', '').lower()
-        
-        # Check exact matches first
-        if cape_type in CAPE_RARITY:
-            score = CAPE_RARITY[cape_type]
-            if score < rarest_score:
-                rarest_score = score
-                rarest = cape_type
-        else:
-            # Check if cape type contains any known cape name
-            for known_cape, score in CAPE_RARITY.items():
-                if known_cape in cape_type or cape_type in known_cape:
-                    if score < rarest_score:
-                        rarest_score = score
-                        rarest = known_cape
-                    break
-            else:
-                # Unknown cape type
-                if rarest_score > CAPE_RARITY['other']:
-                    rarest = cape_type
-                    rarest_score = CAPE_RARITY['other']
-    
-    if rarest is None:
-        return "No_Cape", 9999
-    
-    return rarest, rarest_score
 
 def get_name_history(uuid):
     """Get name change history for a UUID"""
@@ -242,26 +142,6 @@ def display_stats():
     print("\n--- RANK DISTRIBUTION ---")
     for rank, count in sorted(stats.items()):
         print(f"{rank}: {count}")
-    
-    if cape_stats:
-        print("\n--- CAPE DISTRIBUTION (by rarity) ---")
-        # Sort by rarity score
-        sorted_capes = sorted(cape_stats.items(), key=lambda x: CAPE_RARITY.get(x[0], 999))
-        for cape, count in sorted_capes[:15]:  # Show top 15
-            rarity_score = CAPE_RARITY.get(cape, 999)
-            if rarity_score <= 6:
-                rarity_label = "⭐⭐⭐ ULTRA RARE"
-            elif rarity_score <= 14:
-                rarity_label = "⭐⭐ RARE MINECON"
-            elif rarity_score <= 24:
-                rarity_label = "⭐ EVENT CAPE"
-            elif rarity_score <= 31:
-                rarity_label = "COMMON"
-            elif rarity_score <= 42:
-                rarity_label = "MOVIE PROMO"
-            else:
-                rarity_label = "MOD/OTHER"
-            print(f"{cape}: {count} ({rarity_label})")
     
     if username_changes:
         print("\n--- USERNAME CHANGES DETECTED ---")
@@ -349,10 +229,6 @@ def check_player(username, filename, is_recheck=False):
                 username_changes.append((username, current_username))
             print(f"\n[⚠] Username changed: {username} → {current_username}")
     
-    # Get capes
-    capes_list, cape_error = get_capes(uuid)
-    rarest_cape, cape_rarity_score = get_rarest_cape(capes_list)
-    
     # Get Hypixel data
     player_data, error, hypixel_rate_limited = get_hypixel_data(uuid)
     
@@ -405,45 +281,21 @@ def check_player(username, filename, is_recheck=False):
             stats['Username_Changed'] += 1
         if is_online:
             stats['Currently_Online'] += 1
-        cape_stats[rarest_cape] += 1
         if not is_recheck:
             checked_count += 1
     
     # Copy file to categories
     categories_to_copy = []
     
-    # 1. Rank folder
+    # Rank folder
     categories_to_copy.append(rank)
     copy_file_to_category(filename, rank)
-    
-    # 2. Rarest cape folder
-    categories_to_copy.append(rarest_cape)
-    copy_file_to_category(filename, rarest_cape)
     
     # Print individual result
     print(f"\n[✓] {current_username}")
     if name_changed:
         print(f"    Old Username: {username}")
     print(f"    Rank: {rank}")
-    
-    # Display cape info with rarity
-    if capes_list and len(capes_list) > 0:
-        print(f"    🎭 Capes: {len(capes_list)} found")
-        if cape_rarity_score <= 6:
-            print(f"    👑 Rarest: {rarest_cape} ⭐⭐⭐ ULTRA RARE!")
-        elif cape_rarity_score <= 14:
-            print(f"    👑 Rarest: {rarest_cape} ⭐⭐ RARE MINECON!")
-        elif cape_rarity_score <= 24:
-            print(f"    👑 Rarest: {rarest_cape} ⭐ EVENT CAPE")
-        elif cape_rarity_score <= 31:
-            print(f"    👑 Rarest: {rarest_cape} (Common)")
-        elif cape_rarity_score <= 42:
-            print(f"    👑 Rarest: {rarest_cape} (Movie Promo)")
-        else:
-            print(f"    👑 Rarest: {rarest_cape} (Mod Cape)")
-    else:
-        print(f"    🎭 No capes")
-    
     print(f"    Last Login: {format_timestamp(last_login)}")
     print(f"    Status: {'ONLINE' if is_online else 'OFFLINE'}")
     print(f"    📁 Copied to: {', '.join(categories_to_copy)}")
@@ -530,9 +382,8 @@ def main():
     print("\nFiles have been organized into the 'results' folder!")
     print("\nFolder structure:")
     print("  - Rank folders: VIP, VIP_PLUS, MVP, MVP_PLUS, MVP_PLUS_PLUS, None")
-    print("  - Cape folders: Named by rarest cape (scrolls, minecon2011, No_Cape, etc.)")
     print("  - Error folders: Failed_Lookup, No_Profile")
-    print("\nEach account is copied to BOTH its rank folder AND its rarest cape folder!")
+    print("\nEach account is copied to its rank folder for easy organization!")
 
 if __name__ == "__main__":
     main()
